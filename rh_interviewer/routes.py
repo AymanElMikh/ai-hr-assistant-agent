@@ -2,21 +2,17 @@
 
 from datetime import datetime
 from typing import Dict
-import json
 
 from flask import Blueprint, request, jsonify
 from langchain_core.messages import HumanMessage, BaseMessage
 from dataclasses import asdict
 
+# Import the services
+from .services.hr_assistant_service import hr_assistant_service
+from .services.sessions_service import sessions_service
 
-# Import models and session manager from the local package
-from .models import (
-    session_manager
-)
-
-# Assuming these are provided by your base code
-from rh_interviewer.rh_assistant_agent import app as langraph_app
-from rh_interviewer.utils import safe_invoke_graph, get_stage_info, create_success_response, create_error_response
+# Import utilities
+from rh_interviewer.utils import get_stage_info, create_success_response, create_error_response
 
 # ==============================================================================
 # 🎯 API Endpoints (Blueprint)
@@ -59,13 +55,13 @@ def health_check():
 def create_session():
     """Create a new HR Assistant session."""
     try:
-        session_id = session_manager.create_session()
-        session_info = session_manager.get_session_info(session_id)
-        session_data = session_manager.get_session(session_id)
+        session_id = sessions_service.create_session()
+        session_info = sessions_service.get_session_info(session_id)
+        session_data = sessions_service.get_session(session_id)
         
         initial_messages = session_data['state'].get('messages', [])
         formatted_messages = [serialize_message(msg, session_info.current_stage) for msg in initial_messages]
-        stage_info = get_stage_info(session_info.current_stage, session_manager.global_config)
+        stage_info = get_stage_info(session_info.current_stage, sessions_service.get_global_config())
         
         return jsonify(create_success_response(
             "Session created successfully",
@@ -82,14 +78,14 @@ def create_session():
 @api_bp.route('/sessions/<string:session_id>', methods=['GET'])
 def get_session_status(session_id: str):
     """Get current session status and information."""
-    session_info = session_manager.get_session_info(session_id)
+    session_info = sessions_service.get_session_info(session_id)
     if not session_info:
         return create_error_response("Session not found", status_code=404)
     
-    session_data = session_manager.get_session(session_id)
+    session_data = sessions_service.get_session(session_id)
     messages = session_data['state'].get('messages', [])
     recent_messages = [serialize_message(msg, session_info.current_stage) for msg in messages[-10:]]
-    stage_info = get_stage_info(session_info.current_stage, session_manager.global_config)
+    stage_info = get_stage_info(session_info.current_stage, sessions_service.get_global_config())
     
     return jsonify(create_success_response(
         "Session status retrieved",
@@ -110,20 +106,21 @@ def send_message(session_id: str):
     if not user_message:
         return create_error_response("Message content is required", status_code=400)
     
-    session_data = session_manager.get_session(session_id)
+    session_data = sessions_service.get_session(session_id)
     if not session_data:
         return create_error_response("Session not found", status_code=404)
     
     current_state = session_data['state']
     current_state['messages'].append(HumanMessage(content=user_message))
     
-    result, error = safe_invoke_graph(langraph_app, current_state, session_data['config'])
+    # Use the HR Assistant service to process the message
+    result, error = hr_assistant_service.process_message(current_state, session_data['config'])
     
     if error:
         return create_error_response("Failed to process message", str(error), 500)
     
-    session_manager.update_session(session_id, result)
-    session_info = session_manager.get_session_info(session_id)
+    sessions_service.update_session(session_id, result)
+    session_info = sessions_service.get_session_info(session_id)
     
     last_message = result['messages'][-1]
     assistant_response = serialize_message(last_message, session_info.current_stage)
@@ -133,7 +130,7 @@ def send_message(session_id: str):
         stage_transition = {
             'from': session_info.current_stage,
             'to': session_info.next_stage,
-            'stage_info': get_stage_info(session_info.next_stage, session_manager.global_config)
+            'stage_info': get_stage_info(session_info.next_stage, sessions_service.get_global_config())
         }
     
     return jsonify(create_success_response(
@@ -141,7 +138,7 @@ def send_message(session_id: str):
         {
             'assistant_response': assistant_response,
             'session_info': asdict(session_info),
-            'stage_info': get_stage_info(session_info.current_stage, session_manager.global_config),
+            'stage_info': get_stage_info(session_info.current_stage, sessions_service.get_global_config()),
             'stage_transition': stage_transition,
             'is_complete': session_info.current_stage == "summary"
         }
@@ -150,11 +147,11 @@ def send_message(session_id: str):
 @api_bp.route('/sessions/<string:session_id>/messages', methods=['GET'])
 def get_messages(session_id: str):
     """Get all messages for a session."""
-    session_data = session_manager.get_session(session_id)
+    session_data = sessions_service.get_session(session_id)
     if not session_data:
         return create_error_response("Session not found", status_code=404)
     
-    session_info = session_manager.get_session_info(session_id)
+    session_info = sessions_service.get_session_info(session_id)
     messages = session_data['state'].get('messages', [])
     formatted_messages = [serialize_message(msg, session_info.current_stage) for msg in messages]
     
@@ -170,11 +167,11 @@ def get_messages(session_id: str):
 @api_bp.route('/sessions/<string:session_id>/summary', methods=['GET'])
 def get_summary(session_id: str):
     """Get the performance review summary."""
-    session_data = session_manager.get_session(session_id)
+    session_data = sessions_service.get_session(session_id)
     if not session_data:
         return create_error_response("Session not found", status_code=404)
     
-    session_info = session_manager.get_session_info(session_id)
+    session_info = sessions_service.get_session_info(session_id)
     if session_info.current_stage != "summary":
         return create_error_response("Summary not available yet. Complete all stages first.", status_code=400)
     
@@ -197,14 +194,14 @@ def get_summary(session_id: str):
 @api_bp.route('/sessions/<string:session_id>', methods=['DELETE'])
 def delete_session(session_id: str):
     """Delete a session."""
-    if session_manager.delete_session(session_id):
+    if sessions_service.delete_session(session_id):
         return jsonify(create_success_response("Session deleted successfully"))
     return create_error_response("Session not found", status_code=404)
 
 @api_bp.route('/sessions/<string:session_id>/help', methods=['GET'])
 def get_help(session_id: str):
     """Get context-sensitive help for current stage."""
-    session_info = session_manager.get_session_info(session_id)
+    session_info = sessions_service.get_session_info(session_id)
     if not session_info:
         return create_error_response("Session not found", status_code=404)
     
@@ -227,7 +224,7 @@ def get_help(session_id: str):
         "Help information retrieved",
         {
             'help': current_help,
-            'stage_info': get_stage_info(session_info.current_stage, session_manager.global_config),
+            'stage_info': get_stage_info(session_info.current_stage, sessions_service.get_global_config()),
             'session_info': asdict(session_info)
         }
     ))

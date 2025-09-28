@@ -1,34 +1,16 @@
-# rh_interviewer/models.py
+# rh_interviewer/config.py
 
-from datetime import datetime
-from typing import Dict, Any, Optional, Annotated, List, TypedDict
-from dataclasses import dataclass, asdict, field
-from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
+from typing import Dict, List
+from dataclasses import dataclass, field
+from .models import InterviewStage
 
 # ==============================================================================
-# 📦 Core Data Models (Migrated from utils.py)
+# 📦 Configuration Classes
 # ==============================================================================
-
-@dataclass
-class APIResponse:
-    """Standard API response structure."""
-    success: bool
-    message: str
-    data: Optional[Dict[Any, Any]] = None
-    error: Optional[str] = None
-    timestamp: str = ""
-
-    def __post_init__(self):
-        if not self.timestamp:
-            self.timestamp = datetime.now().isoformat()
-
-    def to_dict(self):
-        return {k: v for k, v in asdict(self).items() if v is not None}
 
 @dataclass
 class TransitionConfig:
-    """Configuration for stage transitions to reduce hardcoded values."""
+    """Configuration for stage transitions"""
     min_completeness_score: float = 0.7
     emergency_completeness_score: float = 0.5
     max_interactions_before_force: int = 6
@@ -49,7 +31,7 @@ class TransitionConfig:
 
 @dataclass
 class CompletionWeights:
-    """Configurable weights for completion scoring."""
+    """Configurable weights for completion scoring"""
     keyword_coverage: float = 0.25
     depth_score: float = 0.25
     interactions: float = 0.20
@@ -58,7 +40,7 @@ class CompletionWeights:
 
 @dataclass
 class StageConfig:
-    """Configuration for individual stages."""
+    """Configuration for individual interview stages"""
     pretty_name: str
     context_text: str
     min_interactions: int = 1
@@ -70,66 +52,28 @@ class StageConfig:
     force_transition_interactions: int = 6
 
 @dataclass
-class GlobalConfig:
-    """Global configuration for the HR assistant."""
-    stage_order: List[str] = field(default_factory=lambda: [
-        "advancements", "challenges", "achievements", "training_needs", "action_plan", "summary"
+class InterviewConfig:
+    """Main configuration for the interview system"""
+    stage_order: List[InterviewStage] = field(default_factory=lambda: [
+        InterviewStage.ADVANCEMENTS, 
+        InterviewStage.CHALLENGES, 
+        InterviewStage.ACHIEVEMENTS, 
+        InterviewStage.TRAINING_NEEDS, 
+        InterviewStage.ACTION_PLAN, 
+        InterviewStage.SUMMARY
     ])
-    stages: Dict[str, StageConfig] = field(default_factory=dict)
+    stages: Dict[InterviewStage, StageConfig] = field(default_factory=dict)
     transition_config: TransitionConfig = field(default_factory=TransitionConfig)
     completion_weights: CompletionWeights = field(default_factory=CompletionWeights)
-    initial_stage: str = "advancements"
+    initial_stage: InterviewStage = InterviewStage.ADVANCEMENTS
     required_env_vars: List[str] = field(default_factory=lambda: [
         "OPENAI_API_KEY", "LANGCHAIN_API_KEY"
     ])
 
-# ==============================================================================
-# 📦 Type Definitions
-# ==============================================================================
-
-class AgentState(TypedDict):
-    """Agent state type definition."""
-    messages: Annotated[List[BaseMessage], add_messages]
-    current_stage: str
-    captured_data: Dict[str, Any]
-    next_stage: str
-    stage_completion_metrics: Dict[str, Any]
-    interaction_count: int
-    stage_messages: Dict[str, List[str]]
-
-StageName = str
-
-# ==============================================================================
-# 📦 API Response Models
-# ==============================================================================
-
-@dataclass
-class SessionInfo:
-    """Session information structure."""
-    session_id: str
-    current_stage: str
-    next_stage: str
-    interaction_count: int
-    completed_stages: list
-    progress_percentage: float
-    stage_completion_metrics: Dict[str, Any]
-
-@dataclass
-class MessageInfo:
-    """Message information structure."""
-    content: str
-    role: str
-    timestamp: str
-    stage: str
-
-# ==============================================================================
-# 🧠 Configuration and State Management
-# ==============================================================================
-
-def build_default_config() -> GlobalConfig:
-    """Build the default configuration with improved stage definitions."""
+def build_default_config() -> InterviewConfig:
+    """Build the default interview configuration"""
     stages = {
-        "advancements": StageConfig(
+        InterviewStage.ADVANCEMENTS: StageConfig(
             pretty_name="📈 Professional Advancements & Milestones",
             context_text="Focus on documenting professional advancements and milestones since the last review. Please share specific examples of your growth and development.",
             min_interactions=2,
@@ -139,7 +83,7 @@ def build_default_config() -> GlobalConfig:
             completion_threshold=0.7,
             force_transition_interactions=5,
         ),
-        "challenges": StageConfig(
+        InterviewStage.CHALLENGES: StageConfig(
             pretty_name="⚠️ Challenges & Obstacles",
             context_text="Now let's discuss the challenges and obstacles you've faced. Understanding these helps identify areas for support and improvement.",
             min_interactions=2,
@@ -149,7 +93,7 @@ def build_default_config() -> GlobalConfig:
             completion_threshold=0.6,
             force_transition_interactions=4,
         ),
-        "achievements": StageConfig(
+        InterviewStage.ACHIEVEMENTS: StageConfig(
             pretty_name="🏆 Key Achievements & Accomplishments",
             context_text="Let's talk about your key achievements and accomplishments. Focus on measurable results and positive impacts.",
             min_interactions=2,
@@ -159,7 +103,7 @@ def build_default_config() -> GlobalConfig:
             completion_threshold=0.75,
             force_transition_interactions=6,
         ),
-        "training_needs": StageConfig(
+        InterviewStage.TRAINING_NEEDS: StageConfig(
             pretty_name="📚 Training & Development Needs",
             context_text="What training or development areas would be most beneficial for your growth? Consider both technical and soft skills.",
             min_interactions=1,
@@ -169,7 +113,7 @@ def build_default_config() -> GlobalConfig:
             completion_threshold=0.6,
             force_transition_interactions=4,
         ),
-        "action_plan": StageConfig(
+        InterviewStage.ACTION_PLAN: StageConfig(
             pretty_name="📋 Action Plan & Goals",
             context_text="Let's create a concrete action plan for your professional development. Focus on specific, measurable goals with timelines.",
             min_interactions=2,
@@ -179,7 +123,7 @@ def build_default_config() -> GlobalConfig:
             completion_threshold=0.75,
             force_transition_interactions=5,
         ),
-        "summary": StageConfig(
+        InterviewStage.SUMMARY: StageConfig(
             pretty_name="📊 Performance Review Summary",
             context_text="Generating comprehensive summary of our discussion.",
             min_interactions=0,
@@ -191,26 +135,4 @@ def build_default_config() -> GlobalConfig:
         ),
     }
 
-    return GlobalConfig(
-        stage_order=["advancements", "challenges", "achievements", "training_needs", "action_plan", "summary"],
-        stages=stages,
-    )
-
-def initialize_state(cfg: Optional[GlobalConfig] = None, initial_message: Optional[str] = None) -> AgentState:
-    """Initialize agent state with configuration."""
-    if cfg is None:
-        cfg = build_default_config()
-    
-    if initial_message is None:
-        initial_stage_config = cfg.stages.get(cfg.initial_stage)
-        initial_message = initial_stage_config.context_text if initial_stage_config else "Hello! Let's begin your performance review."
-
-    return {
-        "messages": [],  # Will be populated with initial message by the caller
-        "current_stage": cfg.initial_stage,
-        "captured_data": {},
-        "next_stage": cfg.initial_stage,
-        "stage_completion_metrics": {},
-        "interaction_count": 0,
-        "stage_messages": {},
-    }
+    return InterviewConfig(stages=stages)
