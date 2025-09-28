@@ -4,7 +4,7 @@ This module centralizes configuration, reduces hardcoded values,
 and provides clearer transition logic with less overlap.
 
 Key improvements:
-- Moved hardcoded strings to configuration
+- Moved models to models.py module
 - Simplified transition conditions to reduce overlap
 - Made transition thresholds configurable
 - Separated concerns more clearly
@@ -14,168 +14,46 @@ from __future__ import annotations
 import os
 import re
 import logging
-from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Any
+from datetime import datetime
+
 from langchain_core.messages import AIMessage, BaseMessage
-from langgraph.graph.message import add_messages
+
+# Import models from the models module
+from .models import (
+    APIResponse, TransitionConfig, CompletionWeights, StageConfig, 
+    GlobalConfig, AgentState, build_default_config, initialize_state
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.INFO)
 
-# ---------------- CONFIGURABLE CONSTANTS ----------------
+# ==============================================================================
+# 🛠️ Utility Functions
+# ==============================================================================
 
-@dataclass
-class TransitionConfig:
-    """Configuration for stage transitions to reduce hardcoded values."""
-    # Completion thresholds
-    min_completeness_score: float = 0.7
-    emergency_completeness_score: float = 0.5
-    max_interactions_before_force: int = 6
-    min_interactions_for_emergency: int = 3
+def create_success_response(message: str, data: Optional[Dict] = None) -> Dict:
+    """Creates a successful API response using the standard format."""
+    return APIResponse(success=True, message=message, data=data or {}).to_dict()
+
+def create_error_response(message: str, error: Optional[str] = None, status_code: int = 500) -> Tuple[Dict, int]:
+    """Creates an error API response with a status code."""
+    return APIResponse(success=False, message=message, error=error).to_dict(), status_code
+
+def get_stage_info(stage: str, config: GlobalConfig) -> Dict:
+    """Gets formatted stage information from the global configuration."""
+    stage_config = config.stages.get(stage)
+    pretty_name = getattr(stage_config, 'pretty_name', stage.title().replace('_', ' '))
+    description = getattr(stage_config, 'context_text', '')
     
-    # User intent signals
-    continue_signals: List[str] = field(default_factory=lambda: [
-        "next", "continue", "move on", "done", "finished", 
-        "that's it", "let's proceed", "ready"
-    ])
-    
-    # Transition messages
-    transition_messages: Dict[str, str] = field(default_factory=lambda: {
-        "challenges": "Great! Now let's discuss any challenges or obstacles you've faced.",
-        "achievements": "Excellent! Now let's talk about your key achievements and accomplishments.",
-        "training_needs": "Perfect! Now let's identify areas for your professional development.",
-        "action_plan": "Great! Finally, let's create an action plan for your continued growth.",
-        "summary": "Thank you! Let me now provide a comprehensive summary of our discussion."
-    })
-
-@dataclass
-class CompletionWeights:
-    """Configurable weights for completion scoring."""
-    keyword_coverage: float = 0.25
-    depth_score: float = 0.25
-    interactions: float = 0.20
-    words: float = 0.15
-    examples: float = 0.15
-
-# ---------------- CORE CONFIGURATION ----------------
-
-StageName = str
-
-@dataclass
-class StageConfig:
-    pretty_name: str
-    context_text: str
-    min_interactions: int = 1
-    min_word_count: int = 50
-    required_keywords: List[str] = field(default_factory=list)
-    depth_indicators: List[str] = field(default_factory=list)
-    follow_up_template: str = "To ensure we capture everything important, could you elaborate on: {missing}?"
-    # Stage-specific thresholds
-    completion_threshold: float = 0.7
-    force_transition_interactions: int = 6
-
-@dataclass
-class GlobalConfig:
-    stage_order: List[StageName]
-    stages: Dict[StageName, StageConfig]
-    transition_config: TransitionConfig = field(default_factory=TransitionConfig)
-    completion_weights: CompletionWeights = field(default_factory=CompletionWeights)
-    required_env_vars: List[str] = field(default_factory=lambda: ["OPENAI_API_KEY"])
-    initial_stage: StageName = "advancements"
-
-# ---------------------------------------------------------------------------
-# AgentState type definition
-# ---------------------------------------------------------------------------
-
-from typing import TypedDict, Annotated
-
-class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], add_messages]
-    current_stage: str
-    captured_data: Dict[str, Any]
-    next_stage: str
-    stage_completion_metrics: Dict[str, Any]
-    interaction_count: int
-    stage_messages: Dict[str, List[str]]
-
-# ---------------------------------------------------------------------------
-# Configuration builder with improved defaults
-# ---------------------------------------------------------------------------
-
-def build_default_config() -> GlobalConfig:
-    """Build the default configuration with improved stage definitions."""
-    stages = {
-        "advancements": StageConfig(
-            pretty_name="📈 Professional Advancements & Milestones",
-            context_text="Focus on documenting professional advancements and milestones since the last review. Please share specific examples of your growth and development.",
-            min_interactions=2,
-            min_word_count=100,
-            required_keywords=["skill", "project", "responsibility", "improvement", "achievement", "learn", "develop", "growth"],
-            depth_indicators=["specific", "example", "result", "impact", "implemented", "created", "led", "managed"],
-            completion_threshold=0.7,
-            force_transition_interactions=5,
-        ),
-        "challenges": StageConfig(
-            pretty_name="⚠️ Challenges & Obstacles",
-            context_text="Now let's discuss the challenges and obstacles you've faced. Understanding these helps identify areas for support and improvement.",
-            min_interactions=2,
-            min_word_count=80,
-            required_keywords=["challenge", "difficult", "obstacle", "problem", "barrier", "issue", "struggle"],
-            depth_indicators=["approach", "solution", "overcome", "learned", "adapted", "resolved", "handled"],
-            completion_threshold=0.6,  # Lower threshold as this can be sensitive
-            force_transition_interactions=4,
-        ),
-        "achievements": StageConfig(
-            pretty_name="🏆 Key Achievements & Accomplishments",
-            context_text="Let's talk about your key achievements and accomplishments. Focus on measurable results and positive impacts.",
-            min_interactions=2,
-            min_word_count=120,
-            required_keywords=["accomplished", "delivered", "exceeded", "successful", "completed", "achieved", "won"],
-            depth_indicators=["metric", "percentage", "number", "result", "impact", "recognition", "outcome", "improved"],
-            completion_threshold=0.75,
-            force_transition_interactions=6,
-        ),
-        "training_needs": StageConfig(
-            pretty_name="📚 Training & Development Needs",
-            context_text="What training or development areas would be most beneficial for your growth? Consider both technical and soft skills.",
-            min_interactions=1,
-            min_word_count=60,
-            required_keywords=["skill", "training", "development", "learn", "improve", "certification", "course"],
-            depth_indicators=["specific", "goal", "timeline", "program", "mentor", "practice"],
-            completion_threshold=0.6,
-            force_transition_interactions=4,
-        ),
-        "action_plan": StageConfig(
-            pretty_name="📋 Action Plan & Goals",
-            context_text="Let's create a concrete action plan for your professional development. Focus on specific, measurable goals with timelines.",
-            min_interactions=2,
-            min_word_count=100,
-            required_keywords=["goal", "plan", "objective", "timeline", "action", "target", "milestone"],
-            depth_indicators=["specific", "measurable", "deadline", "resource", "steps", "review"],
-            completion_threshold=0.75,
-            force_transition_interactions=5,
-        ),
-        "summary": StageConfig(
-            pretty_name="📊 Performance Review Summary",
-            context_text="Generating comprehensive summary of our discussion.",
-            min_interactions=0,
-            min_word_count=0,
-            required_keywords=[],
-            depth_indicators=[],
-            completion_threshold=0.0,
-            force_transition_interactions=1,
-        ),
+    return {
+        'stage': stage,
+        'pretty_name': pretty_name,
+        'description': description,
+        'order': config.stage_order.index(stage) if stage in config.stage_order else -1,
+        'total_stages': len(config.stage_order)
     }
-
-    return GlobalConfig(
-        stage_order=["advancements", "challenges", "achievements", "training_needs", "action_plan", "summary"],
-        stages=stages,
-    )
-
-# ---------------------------------------------------------------------------
-# Improved utility functions
-# ---------------------------------------------------------------------------
 
 def get_stage_responses(state: AgentState, stage: str) -> List[str]:
     """Return the list of user responses stored for a given stage."""
@@ -204,24 +82,17 @@ def has_specific_examples(text: str) -> bool:
     
     lowered = text.lower()
     
-    # Check for numerical data
     has_numbers = bool(re.search(r"\d+[\.,]?\d*\s*%?", text))
     
-    # Check for example indicators
     example_indicators = [
         "for example", "such as", "specifically", "in particular", "including",
         "like", "instance", "case", "project", "when", "during", "resulted in"
     ]
     has_example_words = any(ind in lowered for ind in example_indicators)
     
-    # Check for detailed descriptions
     is_detailed = len(text.split()) > 80
     
     return has_numbers or has_example_words or is_detailed
-
-# ---------------------------------------------------------------------------
-# Improved completion evaluation
-# ---------------------------------------------------------------------------
 
 def evaluate_stage_completion(state: AgentState, cfg: Optional[GlobalConfig] = None) -> Dict[str, Any]:
     """Evaluate stage completion with configurable weights and thresholds."""
@@ -235,17 +106,14 @@ def evaluate_stage_completion(state: AgentState, cfg: Optional[GlobalConfig] = N
     combined_text = " ".join(stage_responses)
     interaction_count = state.get("interaction_count", 0)
 
-    # Calculate component scores
     word_count = len(combined_text.split())
     keyword_coverage = calculate_keyword_coverage(combined_text, sc.required_keywords)
     depth_score = calculate_depth_score(combined_text, sc.depth_indicators)
     specific_examples = has_specific_examples(combined_text)
 
-    # Basic requirement checks
     min_interactions_met = interaction_count >= sc.min_interactions
     min_words_met = word_count >= sc.min_word_count
 
-    # Weighted completeness score using configuration
     weights = cfg.completion_weights
     components = [
         keyword_coverage * weights.keyword_coverage,
@@ -257,7 +125,6 @@ def evaluate_stage_completion(state: AgentState, cfg: Optional[GlobalConfig] = N
     
     completeness_score = sum(components)
 
-    # Determine readiness using stage-specific thresholds
     ready_for_next = _determine_readiness(
         completeness_score, interaction_count, sc, cfg.transition_config
     )
@@ -275,26 +142,18 @@ def evaluate_stage_completion(state: AgentState, cfg: Optional[GlobalConfig] = N
     }
 
 def _determine_readiness(completeness_score: float, interaction_count: int, 
-                        stage_config: StageConfig, transition_config: TransitionConfig) -> bool:
+                         stage_config: StageConfig, transition_config: TransitionConfig) -> bool:
     """Determine if stage is ready for transition using non-overlapping conditions."""
-    
-    # Primary readiness condition
     if completeness_score >= stage_config.completion_threshold and interaction_count >= stage_config.min_interactions:
         return True
     
-    # Emergency transition (force forward if stuck)
     if interaction_count >= stage_config.force_transition_interactions:
         return completeness_score >= transition_config.emergency_completeness_score
     
-    # Extended interaction with decent progress
     if interaction_count >= transition_config.min_interactions_for_emergency * 2:
         return completeness_score >= 0.6
     
     return False
-
-# ---------------------------------------------------------------------------
-# Intent detection and transition logic
-# ---------------------------------------------------------------------------
 
 def detect_conversation_intent(user_message: str, current_stage: str, cfg: Optional[GlobalConfig] = None) -> str:
     """Detect user intent for stage transitions with improved logic."""
@@ -303,11 +162,9 @@ def detect_conversation_intent(user_message: str, current_stage: str, cfg: Optio
 
     text = (user_message or "").lower().strip()
     
-    # Check for explicit continuation signals
     if any(sig in text for sig in cfg.transition_config.continue_signals):
         return "continue"
     
-    # Check for stage-specific keywords
     stage_scores = {}
     for stage_name, sc in cfg.stages.items():
         if stage_name == current_stage:
@@ -318,10 +175,9 @@ def detect_conversation_intent(user_message: str, current_stage: str, cfg: Optio
             matches = sum(1 for kw in all_keywords if kw.lower() in text)
             stage_scores[stage_name] = matches / len(all_keywords)
     
-    # Return stage with highest keyword match if above threshold
     if stage_scores:
         best_stage = max(stage_scores.items(), key=lambda x: x[1])
-        if best_stage[1] >= 0.3:  # Configurable threshold
+        if best_stage[1] >= 0.3:
             return best_stage[0]
     
     return current_stage
@@ -335,7 +191,6 @@ def should_transition_stage(state: AgentState, user_message: Optional[str] = Non
     current_stage = state.get("current_stage", cfg.initial_stage)
     completion_metrics = evaluate_stage_completion(state, cfg)
     
-    # Get next stage in order
     try:
         idx = cfg.stage_order.index(current_stage)
         next_stage = cfg.stage_order[idx + 1] if idx + 1 < len(cfg.stage_order) else None
@@ -345,26 +200,19 @@ def should_transition_stage(state: AgentState, user_message: Optional[str] = Non
     if not next_stage:
         return False, current_stage
     
-    # Check user intent first (highest priority)
     if user_message:
         detected = detect_conversation_intent(user_message, current_stage, cfg)
         if detected == "continue" and completion_metrics.get("ready_for_next", False):
             return True, next_stage
         elif detected == next_stage:
-            # Allow transition to immediate next stage if minimum requirements met
             if (completion_metrics.get("completeness_score", 0) >= 0.5 
                 and completion_metrics.get("interaction_count", 0) >= 1):
                 return True, next_stage
     
-    # Automatic transition when truly ready
     if completion_metrics.get("ready_for_next", False):
         return True, next_stage
     
     return False, current_stage
-
-# ---------------------------------------------------------------------------
-# Context and follow-up generation
-# ---------------------------------------------------------------------------
 
 def get_stage_context(stage: str, cfg: Optional[GlobalConfig] = None) -> str:
     """Get stage context from configuration."""
@@ -374,7 +222,7 @@ def get_stage_context(stage: str, cfg: Optional[GlobalConfig] = None) -> str:
     return sc.context_text if sc else ""
 
 def generate_follow_up_prompts(stage: str, metrics: Dict[str, Any], 
-                             cfg: Optional[GlobalConfig] = None) -> str:
+                              cfg: Optional[GlobalConfig] = None) -> str:
     """Generate follow-up prompts based on missing elements."""
     if cfg is None:
         cfg = build_default_config()
@@ -385,7 +233,6 @@ def generate_follow_up_prompts(stage: str, metrics: Dict[str, Any],
 
     missing = []
     
-    # Check what's missing based on metrics
     if metrics.get("word_count", 0) < sc.min_word_count:
         missing.append("more detailed explanation")
     
@@ -400,24 +247,18 @@ def generate_follow_up_prompts(stage: str, metrics: Dict[str, Any],
     
     return sc.follow_up_template.format(missing=", ".join(missing))
 
-# ---------------------------------------------------------------------------
-# Next stage determination
-# ---------------------------------------------------------------------------
-
 def determine_next_stage(response: AIMessage, current_stage: str, completion_metrics: Dict[str, Any], 
-                        user_message: Optional[str] = None, cfg: Optional[GlobalConfig] = None) -> str:
+                         user_message: Optional[str] = None, cfg: Optional[GlobalConfig] = None) -> str:
     """Determine next stage with simplified logic to avoid overlap."""
     if cfg is None:
         cfg = build_default_config()
 
-    # Get the next logical stage
     try:
         idx = cfg.stage_order.index(current_stage)
         next_stage = cfg.stage_order[idx + 1] if idx + 1 < len(cfg.stage_order) else current_stage
     except ValueError:
         return current_stage
 
-    # Tool-driven transitions (highest priority for structured flow)
     tool_calls = getattr(response, "tool_calls", None)
     if tool_calls and completion_metrics.get("ready_for_next", False):
         tool_name = _extract_tool_name(tool_calls)
@@ -433,13 +274,11 @@ def determine_next_stage(response: AIMessage, current_stage: str, completion_met
             if mapped_stage and mapped_stage == next_stage:
                 return mapped_stage
 
-    # User intent (only if ready or minimum criteria met)
     if user_message:
         detected = detect_conversation_intent(user_message, current_stage, cfg)
         if detected == next_stage and completion_metrics.get("completeness_score", 0) >= 0.5:
             return next_stage
 
-    # Force transition if stuck too long with minimal progress
     sc = cfg.stages.get(current_stage, StageConfig(pretty_name=current_stage, context_text=""))
     if completion_metrics.get("interaction_count", 0) >= sc.force_transition_interactions:
         if completion_metrics.get("completeness_score", 0) >= cfg.transition_config.emergency_completeness_score:
@@ -455,10 +294,6 @@ def _extract_tool_name(tool_calls) -> Optional[str]:
         return first.get("name") if isinstance(first, dict) else getattr(first, "name", None)
     except Exception:
         return None
-
-# ---------------------------------------------------------------------------
-# Stage update functionality
-# ---------------------------------------------------------------------------
 
 def update_stage_after_tool(state: AgentState, cfg: Optional[GlobalConfig] = None) -> AgentState:
     """Apply staged transition and reset counters."""
@@ -477,29 +312,6 @@ def update_stage_after_tool(state: AgentState, cfg: Optional[GlobalConfig] = Non
         }
 
     return {"current_stage": current_stage}
-
-# ---------------------------------------------------------------------------
-# Initialization and helper functions
-# ---------------------------------------------------------------------------
-
-def initialize_state(cfg: Optional[GlobalConfig] = None, initial_message: Optional[str] = None) -> AgentState:
-    """Initialize agent state with configuration."""
-    if cfg is None:
-        cfg = build_default_config()
-    
-    if initial_message is None:
-        initial_stage_config = cfg.stages.get(cfg.initial_stage)
-        initial_message = initial_stage_config.context_text if initial_stage_config else "Hello! Let's begin your performance review."
-
-    return {
-        "messages": [AIMessage(content=initial_message)],
-        "current_stage": cfg.initial_stage,
-        "captured_data": {},
-        "next_stage": cfg.initial_stage,
-        "stage_completion_metrics": {},
-        "interaction_count": 0,
-        "stage_messages": {},
-    }
 
 def print_stage_info(stage: str, cfg: Optional[GlobalConfig] = None) -> None:
     """Print stage information using configuration."""
@@ -536,11 +348,6 @@ def safe_invoke_graph(app, state: AgentState, config: Optional[Dict[str, Any]] =
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    "StageConfig",
-    "GlobalConfig", 
-    "TransitionConfig",
-    "CompletionWeights",
-    "build_default_config",
     "get_stage_responses",
     "evaluate_stage_completion",
     "get_stage_context",
@@ -548,9 +355,14 @@ __all__ = [
     "determine_next_stage",
     "should_transition_stage",
     "update_stage_after_tool",
-    "initialize_state",
     "print_stage_info",
     "validate_environment",
     "safe_invoke_graph",
-    "AgentState",
+    "create_success_response",
+    "create_error_response",
+    "get_stage_info",
+    "calculate_keyword_coverage",
+    "calculate_depth_score",
+    "has_specific_examples",
+    "detect_conversation_intent",
 ]

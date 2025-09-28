@@ -1,5 +1,5 @@
 import os
-from typing import TypedDict, List, Union, Literal, Annotated
+from typing import List
 from dotenv import load_dotenv
 
 from copy import deepcopy
@@ -9,9 +9,9 @@ from langchain_core.messages import SystemMessage
 load_dotenv()
 
 # Import the system prompt from the prompts.py file 
-from prompts import SYSTEM_PROMPT
+from rh_interviewer.prompts import SYSTEM_PROMPT
 # Import the tools from the new tools.py file
-from tools import tools
+from rh_interviewer.tools import tools
 
 # LangChain and LangGraph imports
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -22,7 +22,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 
 # Import refactored utils with configuration
-from utils import (
+from rh_interviewer.utils import (
     build_default_config,
     evaluate_stage_completion,
     get_stage_context,
@@ -34,6 +34,9 @@ from utils import (
     print_stage_info,
     validate_environment,
     safe_invoke_graph,
+)
+
+from rh_interviewer.models import (
     AgentState,
     GlobalConfig
 )
