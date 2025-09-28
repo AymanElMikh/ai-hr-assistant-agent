@@ -32,7 +32,6 @@ from rh_interviewer.utils import (
     should_transition_stage,
     update_stage_after_tool,
     initialize_state,
-    print_stage_info,
     validate_environment,
     safe_invoke_graph,
 )

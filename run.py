@@ -7,8 +7,8 @@ from flask_session import Session
 
 # Import the Blueprint from your package
 from rh_interviewer.routes import api_bp
-# Import the session manager to access global config for validation
-from rh_interviewer.models import session_manager
+# Import the sessions service to access global config for validation
+from rh_interviewer.services.sessions_service import sessions_service
 from rh_interviewer.utils import validate_environment
 
 def create_app():
@@ -44,8 +44,8 @@ def create_app():
 
 if __name__ == '__main__':
     try:
-        # Validate environment using a utility function
-        validate_environment(session_manager.global_config)
+        # Validate environment using the sessions service's global config
+        validate_environment(sessions_service.get_global_config())
         print("✅ Environment validation passed")
     except Exception as e:
         print(f"❌ Environment validation failed: {e}")
