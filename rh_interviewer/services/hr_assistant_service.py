@@ -5,15 +5,18 @@ from typing import List, Tuple, Optional, Dict, Any
 from dotenv import load_dotenv
 
 from copy import deepcopy
+from flask import current_app
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 
 # Load environment variables from a .env file
 load_dotenv()
 
 # Import the system prompt from the prompts.py file 
-from rh_interviewer.prompts import SYSTEM_PROMPT
-# Import the tools from the new tools.py file
-from rh_interviewer.tools import tools
+from rh_interviewer.prompts.system_prompt import SYSTEM_PROMPT
+# Import the DocumentTools class
+from rh_interviewer.tools.document_tools import DocumentTools
+# Import the InterviewService
+from rh_interviewer.services.interview_service import InterviewService
 
 # LangChain and LangGraph imports
 from langchain_openai import ChatOpenAI
@@ -32,31 +35,40 @@ from rh_interviewer.utils import (
     should_transition_stage,
     update_stage_after_tool,
     initialize_state,
+    print_stage_info,
     validate_environment,
     safe_invoke_graph,
 )
 
-from rh_interviewer.models import (
+from rh_interviewer.schemas import (
     AgentState,
     GlobalConfig
 )
 
+# ==============================================================================
+# 🎯 Core HRAssistantService Class
+# ==============================================================================
 
 class HRAssistantService:
     """Service class for HR Assistant functionality."""
     
-    def __init__(self):
-        """Initialize the HR Assistant service."""
+    def __init__(self, interview_service: InterviewService):
+        """Initialize the HR Assistant service with dependency injection."""
+        self.interview_service = interview_service
+        
+        # Create DocumentTools instance with injected service
+        document_tools = DocumentTools(self.interview_service)
+        self.tools = document_tools.tools
+        
         self.config = self._build_config()
         self.global_config = build_default_config()
         self.llm = self._setup_llm()
-        self.llm_with_tools = self.llm.bind_tools(tools)
+        self.llm_with_tools = self.llm.bind_tools(self.tools)
         self.prompt = self._setup_prompt()
-        self.tool_node = ToolNode(tools)
+        self.tool_node = ToolNode(self.tools)
         self.app = self._create_graph()
         
-        # Validate environment on initialization
-        validate_environment(self.global_config)
+        # Note: Environment validation is handled at app startup in run.py
     
     def _build_config(self):
         """Build configuration for the service."""
@@ -296,5 +308,17 @@ class HRAssistantService:
         return evaluate_stage_completion(state, self.global_config)
 
 
-# Create a singleton instance for use in routes
-hr_assistant_service = HRAssistantService()
+# ==============================================================================
+# 🎯 Refactored Factory Function for Flask App Context
+# ==============================================================================
+
+def create_hr_assistant_service() -> HRAssistantService:
+    """
+    Factory function to create a new HRAssistantService instance.
+    This function should be called from the app's initialization logic.
+    """
+    # Use the services already attached to the app context
+    services = current_app.extensions['services']
+    interview_service = services['interview_service']
+    
+    return HRAssistantService(interview_service)

@@ -1,13 +1,18 @@
-# rh_interviewer/models.py
-
 from datetime import datetime
-from typing import Dict, Any, Optional, Annotated, List, TypedDict
+from typing import Dict, Any, Optional, Annotated, List, TypedDict, Union
 from dataclasses import dataclass, asdict, field
-from langchain_core.messages import BaseMessage
+import json
+import uuid
+
+# --- LangChain Imports (Essential for Message Serialization) ---
+from langchain_core.messages import BaseMessage, messages_from_dict, messages_to_dict
 from langgraph.graph.message import add_messages
+# --- End LangChain Imports ---
+
 
 # ==============================================================================
 # 📦 Core Data Models (Migrated from utils.py)
+# (Content is kept the same as provided by the user)
 # ==============================================================================
 
 @dataclass
@@ -214,3 +219,56 @@ def initialize_state(cfg: Optional[GlobalConfig] = None, initial_message: Option
         "interaction_count": 0,
         "stage_messages": {},
     }
+
+# ==============================================================================
+# 💾 Persistence Utilities
+# ==============================================================================
+
+def serialize_agent_state(state: AgentState, created_at: datetime, last_activity: datetime, config: Dict[str, Any]) -> str:
+    """
+    Serializes the full session state (AgentState + metadata) to a JSON string.
+    Handles complex types like BaseMessage and datetime objects.
+    """
+    # 1. Serialize the messages (LangChain utility)
+    serializable_messages = messages_to_dict(state["messages"])
+    
+    # 2. Create a fully serializable dictionary
+    serializable_state = {
+        **state,
+        "messages": serializable_messages, # Replace BaseMessage list with serializable dicts
+        "created_at": created_at.isoformat(),
+        "last_activity": last_activity.isoformat(),
+        "config": config,
+    }
+    
+    # 3. Convert to JSON string
+    return json.dumps(serializable_state)
+
+
+def deserialize_json_to_state(json_string: str) -> Optional[Dict]:
+    """
+    Deserializes a JSON string back into a full session dictionary (AgentState + metadata).
+    Handles complex types like BaseMessage and datetime objects.
+    """
+    try:
+        data = json.loads(json_string)
+        
+        # 1. Deserialize the messages (LangChain utility)
+        messages = messages_from_dict(data.get("messages", []))
+        
+        # 2. Convert ISO strings back to datetime objects
+        created_at = datetime.fromisoformat(data["created_at"])
+        last_activity = datetime.fromisoformat(data["last_activity"])
+        
+        # 3. Reconstruct the session dictionary
+        session_data = {
+            "state": {**data, "messages": messages}, # Put the deserialized messages back into state
+            "created_at": created_at,
+            "last_activity": last_activity,
+            "config": data["config"]
+        }
+        return session_data
+        
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        print(f"Error deserializing session data: {e}")
+        return None

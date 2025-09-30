@@ -19,7 +19,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from langchain_core.messages import AIMessage
 
 # Import models from the models module
-from .models import (
+from .schemas import (
     APIResponse, TransitionConfig, StageConfig, 
     GlobalConfig, AgentState, build_default_config, initialize_state
 )
