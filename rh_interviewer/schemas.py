@@ -1,8 +1,7 @@
 from datetime import datetime
-from typing import Dict, Any, Optional, Annotated, List, TypedDict, Union
+from typing import Dict, Any, Optional, Annotated, List, TypedDict
 from dataclasses import dataclass, asdict, field
 import json
-import uuid
 
 # --- LangChain Imports (Essential for Message Serialization) ---
 from langchain_core.messages import BaseMessage, messages_from_dict, messages_to_dict

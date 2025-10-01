@@ -1,15 +1,8 @@
-# service/hr_assistant_service.py
-
-import os
+import os  # IMPORTANT : Ajouter l'importation de 'os'
 from typing import List, Tuple, Optional, Dict, Any
-from dotenv import load_dotenv
-
 from copy import deepcopy
 from flask import current_app
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
-
-# Load environment variables from a .env file
-load_dotenv()
 
 # Import the system prompt from the prompts.py file 
 from rh_interviewer.prompts.system_prompt import SYSTEM_PROMPT
@@ -62,7 +55,7 @@ class HRAssistantService:
         
         self.config = self._build_config()
         self.global_config = build_default_config()
-        self.llm = self._setup_llm()
+        self.llm = self._setup_llm()  # L'initialisation du LLM se produit ici
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         self.prompt = self._setup_prompt()
         self.tool_node = ToolNode(self.tools)
@@ -85,11 +78,27 @@ class HRAssistantService:
         return Config()
     
     def _setup_llm(self) -> ChatOpenAI:
-        """Setup the language model."""
+        """
+        Setup the language model using Flask configuration or os.environ.
+        Retrieves the OpenAI API key from the most reliable source during startup.
+        """
+        # 🎯 CORRECTION: Tenter de récupérer la clé API directement depuis os.environ.
+        # Nous savons que run.py charge l'environnement correctement.
+        api_key = os.environ.get('OPENAI_API_KEY')
+        
+        # Bien que nous ayons corrigé run.py, nous gardons la vérification
+        # car elle est spécifique à ce service.
+        if not api_key:
+            # Le message d'erreur est plus précis maintenant.
+            raise ValueError(
+                "OPENAI_API_KEY not found in environment variables. "
+                "Please ensure it's set in your .env file and re-run the application."
+            )
+        
         return ChatOpenAI(
             model=self.config.MODEL_NAME, 
             temperature=self.config.TEMPERATURE,
-            api_key=os.getenv("OPENAI_API_KEY")
+            api_key=api_key  # On passe la clé explicitement à ChatOpenAI
         )
     
     def _setup_prompt(self) -> ChatPromptTemplate:
@@ -289,7 +298,7 @@ class HRAssistantService:
         Args:
             state: The current conversation state
             config: Optional configuration for the graph invocation
-        
+            
         Returns:
             Tuple of (result_state, error_message)
         """
@@ -317,6 +326,7 @@ def create_hr_assistant_service() -> HRAssistantService:
     Factory function to create a new HRAssistantService instance.
     This function should be called from the app's initialization logic.
     """
+    
     # Use the services already attached to the app context
     services = current_app.extensions['services']
     interview_service = services['interview_service']

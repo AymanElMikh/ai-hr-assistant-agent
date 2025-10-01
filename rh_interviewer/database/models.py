@@ -4,20 +4,57 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.sqlite import JSON
+from werkzeug.security import generate_password_hash, check_password_hash # NOUVEAUTÉ
 
 # Import Base from config
-from rh_interviewer.database.config import Base
+from rh_interviewer.database.db import Base
+
+
+# ====================================================================
+# NOUVEAU MODÈLE : User (Utilisateur)
+# ====================================================================
+class User(Base):
+    """User model for storing authentication credentials."""
+    __tablename__ = 'users'
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(80), unique=True, nullable=False)
+    # Stocker le hachage du mot de passe
+    password_hash = Column(String(128), nullable=False)
+    is_active = Column(Integer, default=1) # 1=True, 0=False
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Méthodes pour gérer le mot de passe de manière sécurisée
+    def set_password(self, password):
+        """Hache et stocke le mot de passe."""
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        """Vérifie si le mot de passe soumis correspond au hachage stocké."""
+        return check_password_hash(self.password_hash, password)
+
+    def __repr__(self):
+        return f"<User(id={self.id}, username='{self.username}')>"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'is_active': bool(self.is_active)
+        }
+# ====================================================================
 
 
 class Employee(Base):
     """Employee model for storing employee information."""
     __tablename__ = 'employees'
     
+    # ... (Le reste du modèle Employee reste inchangé) ...
     id = Column(Integer, primary_key=True)
     firstname = Column(String(100), nullable=False)
     lastname = Column(String(100), nullable=False)
-    poste_equiped = Column(String(200), nullable=False)  # Job position/role
-    level_of_experience = Column(String(50), nullable=False)  # Junior, Mid, Senior, etc.
+    poste_equiped = Column(String(200), nullable=False) 
+    level_of_experience = Column(String(50), nullable=False) 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -41,15 +78,15 @@ class Employee(Base):
 
 
 class Interview(Base):
-    """Interview model for storing interview sessions and results."""
+    # ... (Modèle Interview inchangé) ...
     __tablename__ = 'interviews'
     
     id = Column(Integer, primary_key=True)
     employee_id = Column(Integer, ForeignKey('employees.id'), nullable=False)
-    session_id = Column(String(100), unique=True, nullable=False)  # UUID from session
+    session_id = Column(String(100), unique=True, nullable=False)
     interview_date = Column(DateTime, default=datetime.utcnow)
-    status = Column(String(50), default='in_progress')  # in_progress, completed, cancelled
-    overall_score = Column(Float, nullable=True)  # Overall interview score
+    status = Column(String(50), default='in_progress')
+    overall_score = Column(Float, nullable=True) 
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     
@@ -76,19 +113,19 @@ class Interview(Base):
 
 
 class StageSummary(Base):
-    """Model for storing summary of each interview stage."""
+    # ... (Modèle StageSummary inchangé) ...
     __tablename__ = 'stage_summaries'
     
     id = Column(Integer, primary_key=True)
     interview_id = Column(Integer, ForeignKey('interviews.id'), nullable=False)
-    stage_name = Column(String(100), nullable=False)  # advancements, challenges, etc.
-    stage_order = Column(Integer, nullable=False)  # Order of stage in interview
+    stage_name = Column(String(100), nullable=False) 
+    stage_order = Column(Integer, nullable=False) 
     
     # Summary content
-    summary_text = Column(Text, nullable=True)  # AI-generated summary of the stage
-    key_points = Column(JSON, nullable=True)  # List of key points discussed
-    completion_score = Column(Float, nullable=True)  # How well the stage was completed
-    interaction_count = Column(Integer, default=0)  # Number of interactions in this stage
+    summary_text = Column(Text, nullable=True) 
+    key_points = Column(JSON, nullable=True) 
+    completion_score = Column(Float, nullable=True) 
+    interaction_count = Column(Integer, default=0) 
     
     # Metadata
     started_at = Column(DateTime, default=datetime.utcnow)

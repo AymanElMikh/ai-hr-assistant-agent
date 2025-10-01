@@ -3,7 +3,7 @@
 import uuid
 import json
 from datetime import datetime
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any
 import os
 
 from rh_interviewer.schemas import (
